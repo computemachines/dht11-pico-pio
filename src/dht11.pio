@@ -1,0 +1,94 @@
+.program dht11
+
+.side_set 1 opt
+
+.define T1 3 ; 24us
+.define T2 8 ; 80us
+.define T3 8 ; 80us
+
+.define TBS 6 ; 48us
+.define TB0 3 ; 24us
+.define TB1 9 ; 72us
+.define TREAD 6 ; 48us after rising edge
+.define dt 6 ; 48us
+
+;                  T1           T2       T3       TS      TB0       TS         TB1
+; ____          _______. ___          ________          ________           ____________         __
+;     \  18ms  /  24us      \  80us  /  80us  \  48us  /  24us  \  48us   /    72us    \       /
+;      --------              ---|----    |     ---|----          ----|----       |      --...--
+;     ^        ^       ^     ^  ^   ^    ^     ^  ^   ^          ^   ^   ^       ^      ^     ^
+;    (1)      (2)     (3)   (4)(A) (5)  (B)   (6)(C) (7)        (6)(7+dt)(8)   (8+dt)  (6)   (9)
+;
+; Line has pullup resistor.
+; (1) MCU drives line LOW for 18ms
+; (2) MCU drives line HIGH for 24us
+; (3) MCU releases line waits for DHT11 to drive line LOW
+; (4) DHT11 drives line LOW for 80us
+; (5) DHT11 drives line HIGH for 80us
+; (6) DHT11 drives line LOW for 48us. Marks bit start.
+; (7) DHT11 drives line HIGH for 24us. Indicates 0 bit.
+; (8) DHT11 drives line HIGH for 72
+; (9) DHT11 releases line once 5*8 bits have been transmitted.
+;
+; Read line dt=48us after (7) or (8). Value is bit value.
+; If 1 wait for low
+
+% c-sdk {
+
+#include "hardware/irq.h"
+
+static inline void dht11_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = dht11_program_get_default_config(offset);
+    
+    pio_gpio_init(pio, pin);
+    
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    sm_config_set_set_pins(&c, pin, 1);
+
+    sm_config_set_in_pins(&c, pin);
+    sm_config_set_in_shift(&c, false, true, 32);
+    // sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+
+    sm_config_set_clkdiv(&c, 1000.0f); // TODO: calculate based on clock speed
+
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio0_hw->inte0 = PIO_IRQ0_INTE_SM0_BITS | PIO_IRQ0_INTE_SM1_BITS;
+
+}
+
+%}
+
+
+PUBLIC wake_peripheral:
+set pindirs,1
+set pins,   0
+
+set x, 10   [2]
+delay_1:
+set y, 30  [1]
+delay_2:   
+jmp y--, delay_2    [6]
+jmp x--, delay_1    [7]
+
+set pins,   1   [T1-1]
+
+PUBLIC wait_for_response:
+set pindirs     0  [2]    ; wait until (A)
+wait 1 pin, 0            [2]    ; wait until (5) then delay until (B)
+wait 0 pin, 0            [2]    ; wait until (6) then delay until (C)
+
+
+set x, 4
+read_byte:
+set y, 7
+read_bit:
+wait 1 pin 0    [3]    ; wait for rising edge then wait dt
+in pins, 1 side 1
+wait 0 pin 0 side 0
+jmp y-- read_bit
+jmp x-- read_byte
+push
+irq 0 side 1
+idle:
+jmp idle

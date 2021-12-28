@@ -1,0 +1,10 @@
+.program simple_read
+
+.wrap_target
+
+in pins, 1
+
+.wrap
+
+idle: 
+jmp idle

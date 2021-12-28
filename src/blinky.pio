@@ -1,0 +1,8 @@
+.program blinky
+
+set pindirs,    0b11
+
+.wrap_target
+set pins 1  [3]
+set pins 2  [3]
+.wrap
